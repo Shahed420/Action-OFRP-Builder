@@ -14,9 +14,10 @@ jobs:
       - name: Initializing Environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y git-core gnupg flex bison gperf build-essential zip curl zlib1g-dev gcc-multilib g++-multilib lib32ncurses5-dev x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip bc repo
+          # lib32ncurses5-dev এর বদলে libncurses5-dev এবং অন্যান্য প্রয়োজনীয় প্যাকেজ
+          sudo apt-get install -y git-core gnupg flex bison gperf build-essential zip curl zlib1g-dev gcc-multilib g++-multilib libncurses5-dev x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip bc
           
-          # Repo টুল সেটআপ এবং আপডেট
+          # Repo টুল সেটআপ (সরাসরি গুগল সোর্স থেকে)
           mkdir -p ~/bin
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
