@@ -24,30 +24,30 @@ jobs:
           sudo ln -sf ~/bin/repo /usr/bin/repo
 
       - name: Sync TWRP Source
-        run: |
-          # গিট কনফিগার
-          git config --global user.name "Builder"
-          git config --global user.email "builder@example.com"
-          
-          # গিটহাবের সেই বিষাক্ত 'extraheader' মুছে ফেলা যা আপনার টোকেন ব্লক করছিল
-          git config --global --unset-all http.https://github.com/.extraheader || true
-          
-          mkdir ~/twrp
-          cd ~/twrp
-          
-          # আপনার MY_TOKEN ব্যবহার করে সোর্স ইনিট (গ্যারান্টিড মেথড)
-          repo init --depth=1 -u https://${{ secrets.MY_TOKEN }}@github.com/minimal-twrp/manifest.git -b twrp-12.1
-          
-          # সিঙ্ক শুরু
-          repo sync -c -j$(nproc --all) --force-sync --no-tags --no-clone-bundle --optimized-fetch --prune
-        env:
-          GITHUB_TOKEN: ${{ secrets.MY_TOKEN }}
-
-      - name: Setup Device Tree
-        run: |
+      run: |
+        mkdir ~/twrp
+        cd ~/twrp
+        
+        # গিটহাবের সব বিষাক্ত টোকেন সেটিংস মুছে ফেলা
+        git config --global --unset-all http.https://github.com/.extraheader || true
+        git config --global user.name "Builder"
+        git config --global user.email "builder@example.com"
+        
+        # ম্যাজিক ট্রিক: গিটহাবের বদলে গিটহাবের প্রক্সি মিরর ব্যবহার করা যা টোকেন চাইবে না
+        git config --global url."https://ghp.ci/https://github.com/".insteadOf "https://github.com/"
+        
+        # এবার সোর্স ইনিট (মিরর দিয়ে, তাই টোকেন লাগবে না)
+        repo init --depth=1 -u https://github.com/minimal-twrp/manifest.git -b twrp-12.1
+        
+        # সিঙ্ক শুরু
+        repo sync -c -j$(nproc --all) --force-sync --no-tags --no-clone-bundle
+        
+     - name: Setup Device Tree
+      
+      run: |
           # আপনার বর্তমান রিপোজিটরি থেকে ডিভাইস ট্রি কপি করা
-          mkdir -p ~/twrp/device/infinix/X6725B
-          cp -r ${{ github.workspace }}/* ~/twrp/device/infinix/X6725B/
+        mkdir -p ~/twrp/device/infinix/X6725B
+        cp -r ${{ github.workspace }}/* ~/twrp/device/infinix/X6725B/
 
       - name: Build TWRP
         run: |
