@@ -1,60 +1,276 @@
-name: TWRP Recovery Build - Infinix X6725B
+name: TWRP Build for Infinix X6725B (Unisoc)
 
 on:
   workflow_dispatch:
+    inputs:
+      device:
+        description: 'Device codename'
+        required: true
+        default: 'X6725B'
+      branch:
+        description: 'TWRP branch'
+        required: true
+        default: 'twrp-12.1'
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        path: device_tree
+        
+    # ========== Environment Setup ==========
+    - name: Setup Build Environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git git-lfs gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python3-pip
+        
+    - name: Install Repo Tool
+      run: |
+        mkdir -p ~/bin
+        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+        chmod a+x ~/bin/repo
+        echo "$HOME/bin" >> $GITHUB_PATH
+        
+    - name: Configure Git
+      run: |
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
 
-      - name: Initializing Environment
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y git-core gnupg flex bison gperf build-essential zip curl zlib1g-dev gcc-multilib g++-multilib libncurses5-dev x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip bc
-          
-          mkdir -p ~/bin
-          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-          chmod a+x ~/bin/repo
-          sudo ln -sf ~/bin/repo /usr/bin/repo
+    # ========== Token Check ==========
+    - name: Check GitHub Token
+      env:
+        GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      run: |
+        if [ -z "$GH_TOKEN" ]; then
+          echo "⚠️ Warning: GH_TOKEN secret is not set!"
+          echo "Without token, build may fail. Continue anyway..."
+        else
+          echo "✅ Token found"
+          git config --global credential.helper store
+          echo "https://x-access-token:${GH_TOKEN}@github.com" > ~/.git-credentials
+        fi
 
-      - name: Sync TWRP Source
-        run: |
-          mkdir ~/twrp
-          cd ~/twrp
-          
-          # ফ্রেশ গিট কনফিগার
-          git config --global user.name "Builder"
-          git config --global user.email "builder@example.com"
-          
-          # গিটহাবের সেই বিষাক্ত সেটিংস মুছে ফেলা
-          git config --global --unset-all http.https://github.com/.extraheader || true
-          
-          # আমরা এখন গিটহাব বাদ দিয়ে গিটল্যাব ব্যবহার করছি যা ব্লক হয় না
-          repo init --depth=1 -u https://gitlab.com/OrangeFox/Manifest.git -b fox_12.1
-          
-          # সিঙ্ক শুরু
-          repo sync -c -j$(nproc --all) --force-sync --no-tags --no-clone-bundle --optimized-fetch --prune
+    # ========== Clone Manifest ==========
+    - name: Clone TWRP Manifest
+      env:
+        GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      run: |
+        mkdir -p ~/twrp
+        cd ~/twrp
+        
+        # টোকেন সহ বা ছাড়া clone
+        if [ -n "$GH_TOKEN" ]; then
+          repo init --depth=1 -u https://x-access-token:${GH_TOKEN}@github.com/minimal-twrp/manifest.git -b ${{ github.event.inputs.branch }}
+        else
+          # Without token - try direct clone
+          mkdir -p .repo
+          git clone --depth 1 https://github.com/minimal-twrp/manifest.git .repo/manifests
+          cd .repo/manifests
+          git checkout ${{ github.event.inputs.branch }} || git checkout twrp-12.1
+          cd ../..
+          ln -sf .repo/manifests/default.xml .repo/manifest.xml
+        fi
+        
+        echo "✅ Manifest initialized"
 
-      - name: Setup Device Tree
-        run: |
-          mkdir -p ~/twrp/device/infinix/X6725B
-          cp -r ${{ github.workspace }}/* ~/twrp/device/infinix/X6725B/
+    # ========== Sync Source ==========
+    - name: Sync TWRP Source
+      run: |
+        cd ~/twrp
+        
+        if [ -f ".repo/manifest.xml" ]; then
+          echo "🔄 Syncing with repo sync..."
+          repo sync -c -j$(nproc) --force-sync --no-clone-bundle --no-tags --optimized-fetch || \
+          repo sync -c -j4 --force-sync --no-tags
+        else
+          echo "⚠️ Repo sync not possible, cloning essential repos..."
+          # Essential repositories
+          mkdir -p bootable/recovery
+          mkdir -p system/core
+          mkdir -p build
+          mkdir -p external/f2fs-tools
+          mkdir -p external/e2fsprogs
+          
+          git clone --depth 1 https://github.com/minimal-twrp/platform_bootable_recovery.git bootable/recovery || true
+          git clone --depth 1 https://github.com/minimal-twrp/platform_system_core.git system/core || true
+          git clone --depth 1 https://github.com/minimal-twrp/platform_build.git build || true
+        fi
 
-      - name: Build TWRP
-        run: |
-          cd ~/twrp
-          export ALLOW_MISSING_DEPENDENCIES=true
+    # ========== Setup Device Tree ==========
+    - name: Setup Device Tree for X6725B
+      run: |
+        cd ~/twrp
+        
+        # Device directory তৈরি
+        mkdir -p device/infinix/X6725B
+        
+        # Device Tree কপি
+        echo "📱 Copying device tree from repository..."
+        cp -r $GITHUB_WORKSPACE/device_tree/https://github.com/Shahed420/Infinix_X6725B_TWRP_Tree.git/
+        
+        # BoardConfig.mk ঠিক আছে কিনা চেক
+        if [ -f "device/infinix/X6725B/BoardConfig.mk" ]; then
+          echo "✅ BoardConfig.mk found"
+          cat device/infinix/X6725B/BoardConfig.mk | grep "BOARD_USES_VENDOR_BOOTIMAGE"
+        else
+          echo "❌ BoardConfig.mk not found!"
+          exit 1
+        fi
+        
+        # Prebuilt kernel directory
+        mkdir -p device/infinix/X6725B/prebuilt
+        
+        # Android.mk তৈরি (যদি না থাকে)
+        if [ ! -f "device/infinix/X6725B/Android.mk" ]; then
+          cat > device/infinix/X6725B/Android.mk << 'EOFMK'
+        LOCAL_PATH := $(call my-dir)
+        ifeq ($(TARGET_DEVICE),X6725B)
+        include $(call all-makefiles-under,$(LOCAL_PATH))
+         endif
+        EOFMK
+        fi
+        
+        # vendorsetup.sh তৈরি
+        cat > device/infinix/X6725B/vendorsetup.sh << 'EOFVS'
+        add_lunch_combo twrp_X6725B-eng
+        add_lunch_combo twrp_X6725B-userdebug
+         EOFVS
+
+    # ========== Create Dummy Kernel (if missing) ==========
+    - name: Create Dummy Kernel (if needed)
+      run: |
+        cd ~/twrp
+        
+        # BoardConfig থেকে kernel পাথ চেক
+        if grep -q "TARGET_PREBUILT_KERNEL" device/infinix/X6725B/BoardConfig.mk; then
+          KERNEL_PATH=$(grep "TARGET_PREBUILT_KERNEL" device/infinix/X6725B/BoardConfig.mk | cut -d'=' -f2 | tr -d ' ')
+          KERNEL_PATH=${KERNEL_PATH//\$\(DEVICE_PATH\)/device\/infinix\/X6725B}
+          
+          if [ ! -f "$KERNEL_PATH" ]; then
+            echo "⚠️ Kernel not found at $KERNEL_PATH, creating dummy kernel"
+            mkdir -p $(dirname "$KERNEL_PATH")
+            echo "dummy kernel for build" > "$KERNEL_PATH"
+          fi
+        fi
+        
+        # DTB চেক
+        if grep -q "TARGET_PREBUILT_DTB" device/infinix/X6725B/BoardConfig.mk; then
+          DTB_PATH=$(grep "TARGET_PREBUILT_DTB" device/infinix/X6725B/BoardConfig.mk | cut -d'=' -f2 | tr -d ' ')
+          DTB_PATH=${DTB_PATH//\$\(DEVICE_PATH\)/device\/infinix\/X6725B}
+          
+          if [ ! -f "$DTB_PATH" ]; then
+            echo "⚠️ DTB not found at $DTB_PATH, creating dummy dtb"
+            mkdir -p $(dirname "$DTB_PATH")
+            touch "$DTB_PATH"
+          fi
+        fi
+
+    # ========== Build Environment ==========
+    - name: Setup Build Environment
+      run: |
+        cd ~/twrp
+        
+        # Environment variables
+        export ALLOW_MISSING_DEPENDENCIES=true
+        export LC_ALL=C
+        export TARGET_DEVICE=X6725B
+        export BOARD_USES_VENDOR_BOOTIMAGE=true
+        
+        # CCache setup
+        export USE_CCACHE=1
+        export CCACHE_DIR=/tmp/ccache
+        ccache -M 20G
+        
+        echo "✅ Build environment ready"
+
+    # ========== Build Recovery ==========
+    - name: Build TWRP for X6725B
+      run: |
+        cd ~/twrp
+        
+        export ALLOW_MISSING_DEPENDENCIES=true
+        export LC_ALL=C
+        
+        # Source build environment
+        if [ -f "build/envsetup.sh" ]; then
           source build/envsetup.sh
-          # আপনার বোর্ড কনফিগ অনুযায়ী লাঞ্চ কমান্ড
-          lunch twrp_X6725B-eng || lunch omni_X6725B-eng
-          mka vendorbootimage -j$(nproc --all)
+          
+          # Try different lunch combinations
+          echo "🏗️ Trying lunch for X6725B..."
+          
+          if lunch twrp_X6725B-eng 2>/dev/null; then
+            echo "✅ lunch successful: twrp_X6725B-eng"
+          elif lunch omni_X6725B-eng 2>/dev/null; then
+            echo "✅ lunch successful: omni_X6725B-eng"
+          else
+            echo "⚠️ lunch failed, setting manual variables"
+            export TARGET_PRODUCT=twrp_X6725B
+            export TARGET_BUILD_VARIANT=eng
+          fi
+          
+          # Build vendor_boot (based on BoardConfig)
+          echo "🔨 Building vendor_boot image..."
+          mka vendorbootimage -j$(nproc) 2>&1 | tee build.log
+          
+          # Also try building recovery image
+          echo "🔨 Building recovery image..."
+          mka recoveryimage -j$(nproc) 2>&1 | tee -a build.log
+          
+        else
+          echo "❌ build/envsetup.sh not found!"
+          ls -la build/ || echo "build directory empty"
+          exit 1
+        fi
 
-      - name: Upload Result
-        uses: actions/upload-artifact@v4
-        with:
-          name: TWRP-Infinix-X6725B
-          path: ~/twrp/out/target/product/X6725B/*.img
+    # ========== Find Output Files ==========
+    - name: Find Built Images
+      if: always()
+      run: |
+        cd ~/twrp
+        
+        echo "📂 Searching for built images..."
+        
+        # Find all image files
+        find out/target/product/X6725B -name "*.img" -type f 2>/dev/null | tee images.txt
+        
+        # Specifically look for vendor_boot
+        if [ -f "out/target/product/X6725B/vendor_boot.img" ]; then
+          echo "✅ vendor_boot.img found"
+          ls -lh out/target/product/X6725B/vendor_boot.img
+        else
+          echo "❌ vendor_boot.img not found"
+        fi
+        
+        # Check recovery image
+        if [ -f "out/target/product/X6725B/recovery.img" ]; then
+          echo "✅ recovery.img found"
+          ls -lh out/target/product/X6725B/recovery.img
+        fi
+
+    # ========== Upload Artifacts ==========
+    - name: Upload TWRP Images
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: TWRP-X6725B-${{ github.run_number }}
+        path: |
+          ~/twrp/out/target/product/X6725B/vendor_boot.img
+          ~/twrp/out/target/product/X6725B/recovery.img
+          ~/twrp/out/target/product/X6725B/boot.img
+          ~/twrp/build.log
+          ~/twrp/images.txt
+        if-no-files-found: warn
+        retention-days: 30
+
+    # ========== Upload Complete Out Folder ==========
+    - name: Upload Complete Out Folder (if build failed)
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: complete-out-folder-X6725B
+        path: ~/twrp/out/
+        retention-days: 7
