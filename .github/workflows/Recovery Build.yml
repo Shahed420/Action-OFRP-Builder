@@ -51,19 +51,23 @@ jobs:
           echo "https://x-access-token:${GH_TOKEN}@github.com" > ~/.git-credentials
         fi
 
-    # ========== Create Working Directory ==========
+    # ========== 🔴 FIXED: Create Working Directory with full path ==========
     - name: Create Working Directory
       run: |
-        mkdir -p ~/twrp
-        cd ~/twrp
-        echo "✅ Working directory created at ~/twrp"
+        # ফুল পাথ ব্যবহার করা
+        mkdir -p /home/runner/twrp
+        cd /home/runner/twrp
+        echo "✅ Working directory created at /home/runner/twrp"
+        echo "Current directory: $(pwd)"
+        ls -la
 
     # ========== Clone TWRP Manifest ==========
     - name: Clone TWRP Manifest
       env:
         GH_TOKEN: ${{ secrets.GH_TOKEN }}
       run: |
-        cd ~/twrp
+        # ফুল পাথে cd
+        cd /home/runner/twrp || { echo "❌ Cannot cd to /home/runner/twrp"; exit 1; }
         
         if [ -n "$GH_TOKEN" ]; then
           echo "📥 Using repo init with token..."
@@ -77,11 +81,13 @@ jobs:
           cd ../..
           ln -sf .repo/manifests/default.xml .repo/manifest.xml
         fi
+        
+        echo "✅ Manifest initialized in $(pwd)"
 
     # ========== Sync TWRP Source ==========
     - name: Sync TWRP Source
       run: |
-        cd ~/twrp
+        cd /home/runner/twrp || { echo "❌ Cannot cd to /home/runner/twrp"; exit 1; }
         
         if [ -f ".repo/manifest.xml" ]; then
           echo "🔄 Syncing with repo sync..."
@@ -95,15 +101,15 @@ jobs:
           git clone --depth 1 https://github.com/minimal-twrp/platform_build.git build || true
         fi
 
-    # ========== 🔴 YOUR DEVICE TREE - DIRECT CLONE ==========
+    # ========== Clone Device Tree for X6725B ==========
     - name: Clone Device Tree for X6725B
       run: |
-        cd ~/twrp
+        cd /home/runner/twrp || { echo "❌ Cannot cd to /home/runner/twrp"; exit 1; }
         
         # Device directory তৈরি
         mkdir -p device/infinix/X6725B
         
-        # আপনার Device Tree সরাসরি ক্লোন করা হচ্ছে
+        # Device Tree ক্লোন
         echo "📱 Cloning device tree from: https://github.com/Shahed420/Infinix_X6725B_TWRP_Tree.git"
         git clone https://github.com/Shahed420/Infinix_X6725B_TWRP_Tree.git temp_device
         
@@ -116,8 +122,6 @@ jobs:
         # BoardConfig.mk চেক
         if [ -f "device/infinix/X6725B/BoardConfig.mk" ]; then
           echo "✅ BoardConfig.mk found"
-          echo "=== BoardConfig.mk first 10 lines ==="
-          head -10 device/infinix/X6725B/BoardConfig.mk
         else
           echo "❌ BoardConfig.mk not found!"
           exit 1
@@ -126,7 +130,7 @@ jobs:
     # ========== Create Android.mk if missing ==========
     - name: Create Android.mk if needed
       run: |
-        cd ~/twrp
+        cd /home/runner/twrp || { echo "❌ Cannot cd to /home/runner/twrp"; exit 1; }
         
         if [ ! -f "device/infinix/X6725B/Android.mk" ]; then
           echo "📝 Creating Android.mk"
@@ -134,16 +138,93 @@ jobs:
         LOCAL_PATH := $(call my-dir)
         ifeq ($(TARGET_DEVICE),X6725B)
         include $(call all-makefiles-under,$(LOCAL_PATH))
-         endif
-         EOF
+        endif
+        EOF
           echo "✅ Android.mk created"
         fi
 
-    # ========== ⚠️ vendorsetup.sh SKIPPING (deleted) ==========
-    - name: vendorsetup.sh is deleted - skipping
+    # ========== Create Dummy Kernel ==========
+    - name: Create Dummy Kernel
       run: |
-        echo "⚠️ vendorsetup.sh is deleted as per user request"
-        echo "Will use direct lunch command instead"
+        cd /home/runner/twrp || { echo "❌ Cannot cd to /home/runner/twrp"; exit 1; }
+        
+        mkdir -p device/infinix/X6725B/prebuilt
+        echo "dummy kernel for build" > device/infinix/X6725B/prebuilt/kernel
+        touch device/infinix/X6725B/prebuilt/dtb.img
+        echo "✅ Dummy kernel created at device/infinix/X6725B/prebuilt/kernel"
+
+    # ========== Setup Build Environment ==========
+    - name: Setup Build Environment
+      run: |
+        cd /home/runner/twrp || { echo "❌ Cannot cd to /home/runner/twrp"; exit 1; }
+        
+        export ALLOW_MISSING_DEPENDENCIES=true
+        export LC_ALL=C
+        export TARGET_DEVICE=X6725B
+        
+        export USE_CCACHE=1
+        export CCACHE_DIR=/tmp/ccache
+        ccache -M 20G || true
+        
+        echo "✅ Build environment ready in $(pwd)"
+
+    # ========== Build TWRP ==========
+    - name: Build TWRP for X6725B
+      run: |
+        cd /home/runner/twrp || { echo "❌ Cannot cd to /home/runner/twrp"; exit 1; }
+        
+        export ALLOW_MISSING_DEPENDENCIES=true
+        export LC_ALL=C
+        
+        if [ -f "build/envsetup.sh" ]; then
+          source build/envsetup.sh
+          
+          echo "🏗️ Trying lunch for X6725B..."
+          lunch twrp_X6725B-eng || lunch omni_X6725B-eng
+          
+          echo "🔨 Building vendor_boot image..."
+          mka vendorbootimage -j$(nproc) 2>&1 | tee build.log
+          
+          echo "🔨 Building recovery image..."
+          mka recoveryimage -j$(nproc) 2>&1 | tee -a build.log
+        else
+          echo "❌ build/envsetup.sh not found!"
+          ls -la build/ || echo "build directory empty"
+          exit 1
+        fi
+
+    # ========== Find Built Images ==========
+    - name: Find Built Images
+      if: always()
+      run: |
+        cd /home/runner/twrp || { echo "❌ Cannot cd to /home/runner/twrp"; exit 1; }
+        
+        echo "📂 Searching for built images in $(pwd)..."
+        
+        # Find all image files
+        find out/target/product/X6725B -name "*.img" -type f 2>/dev/null | tee /home/runner/images.txt || echo "No images found"
+        
+        # Copy images to workspace
+        mkdir -p /home/runner/output
+        find out/target/product/X6725B -name "*.img" -type f -exec cp {} /home/runner/output/ \; 2>/dev/null || true
+        
+        ls -la /home/runner/output/ || echo "No images copied"
+
+    # ========== Upload TWRP Images ==========
+    - name: Upload TWRP Images
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: TWRP-X6725B-${{ github.run_number }}
+        path: |
+          /home/runner/twrp/out/target/product/X6725B/vendor_boot.img
+          /home/runner/twrp/out/target/product/X6725B/recovery.img
+          /home/runner/twrp/out/target/product/X6725B/boot.img
+          /home/runner/twrp/build.log
+          /home/runner/images.txt
+          /home/runner/output/
+        if-no-files-found: warn
+        retention-days: 30        echo "Will use direct lunch command instead"
 
     # ========== Create Dummy Kernel ==========
     - name: Create Dummy Kernel (if needed)
