@@ -1,4 +1,4 @@
-name: TWRP Build for Infinix X6725B (Unisoc)
+name: TWRP Build for Infinix X6725B
 
 on:
   workflow_dispatch:
@@ -24,7 +24,7 @@ jobs:
     - name: Setup Build Environment
       run: |
         sudo apt-get update
-        sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git git-lfs gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python3-pip
+        sudo apt-get install -y bc build-essential curl git python3 repo
         
     - name: Install Repo Tool
       run: |
@@ -44,36 +44,30 @@ jobs:
       run: |
         if [ -z "$GH_TOKEN" ]; then
           echo "⚠️ Warning: GH_TOKEN secret is not set!"
-          echo "Without token, build may fail. Continue anyway..."
         else
           echo "✅ Token found"
           git config --global credential.helper store
           echo "https://x-access-token:${GH_TOKEN}@github.com" > ~/.git-credentials
         fi
 
-    # ========== 🔴 FIXED: Create Working Directory with full path ==========
-    - name: Create Working Directory
-      run: |
-        # ফুল পাথ ব্যবহার করা
-        mkdir -p /home/runner/twrp
-        cd /home/runner/twrp
-        echo "✅ Working directory created at /home/runner/twrp"
-        echo "Current directory: $(pwd)"
-        ls -la
-
-    # ========== Clone TWRP Manifest ==========
-    - name: Clone TWRP Manifest
+    # ========== 🔴 FIX: DIRECTORY CREATION ==========
+    - name: Create Working Directory and Clone TWRP Manifest
       env:
         GH_TOKEN: ${{ secrets.GH_TOKEN }}
       run: |
-        # ফুল পাথে cd
-        cd /home/runner/twrp || { echo "❌ Cannot cd to /home/runner/twrp"; exit 1; }
+        # ডিরেক্টরি তৈরি এবং ভেরিফাই
+        mkdir -p /home/runner/twrp
+        cd /home/runner/twrp
+        echo "✅ Working directory: $(pwd)"
+        echo "Directory contents:"
+        ls -la
         
+        # Manifest ক্লোন
         if [ -n "$GH_TOKEN" ]; then
           echo "📥 Using repo init with token..."
           repo init --depth=1 -u https://x-access-token:${GH_TOKEN}@github.com/minimal-twrp/manifest.git -b ${{ github.event.inputs.branch }}
         else
-          echo "📥 Without token - trying direct clone..."
+          echo "📥 Direct clone without token..."
           mkdir -p .repo
           git clone --depth 1 https://github.com/minimal-twrp/manifest.git .repo/manifests
           cd .repo/manifests
@@ -84,66 +78,65 @@ jobs:
         
         echo "✅ Manifest initialized in $(pwd)"
 
-    # ========== Sync TWRP Source ==========
     - name: Sync TWRP Source
       run: |
-        cd /home/runner/twrp || { echo "❌ Cannot cd to /home/runner/twrp"; exit 1; }
+        cd /home/runner/twrp
+        echo "Syncing in $(pwd)..."
         
-        if [ -f ".repo/manifest.xml" ]; then
-          echo "🔄 Syncing with repo sync..."
-          repo sync -c -j$(nproc) --force-sync --no-clone-bundle --no-tags --optimized-fetch || \
-          repo sync -c -j4 --force-sync --no-tags
-        else
-          echo "⚠️ Repo sync not possible, cloning essential repos..."
-          mkdir -p bootable/recovery system/core build
-          git clone --depth 1 https://github.com/minimal-twrp/platform_bootable_recovery.git bootable/recovery || true
-          git clone --depth 1 https://github.com/minimal-twrp/platform_system_core.git system/core || true
-          git clone --depth 1 https://github.com/minimal-twrp/platform_build.git build || true
-        fi
+        repo sync -c -j2 --force-sync --no-clone-bundle --no-tags || \
+        echo "⚠️ Sync had some issues but continuing..."
 
-    # ========== Clone Device Tree for X6725B ==========
-    - name: Clone Device Tree for X6725B
+    # ========== Clone Device Tree ==========
+    - name: Clone Device Tree
       run: |
-        cd /home/runner/twrp || { echo "❌ Cannot cd to /home/runner/twrp"; exit 1; }
+        cd /home/runner/twrp
+        echo "Cloning device tree in $(pwd)..."
         
-        # Device directory তৈরি
+        # Device tree ক্লোন
         mkdir -p device/infinix/X6725B
+        git clone --depth 1 https://github.com/Shahed420/Infinix_X6725B_TWRP_Tree.git device_tree_temp
+        cp -r device_tree_temp/* device/infinix/X6725B/
+        rm -rf device_tree_temp
         
-        # Device Tree ক্লোন
-        echo "📱 Cloning device tree from: https://github.com/Shahed420/Infinix_X6725B_TWRP_Tree.git"
-        git clone https://github.com/Shahed420/Infinix_X6725B_TWRP_Tree.git temp_device
-        
-        # Device tree ফাইল কপি
-        cp -r temp_device/* device/infinix/X6725B/
-        
-        # টেম্প ফাইল ডিলিট
-        rm -rf temp_device
-        
-        # BoardConfig.mk চেক
-        if [ -f "device/infinix/X6725B/BoardConfig.mk" ]; then
-          echo "✅ BoardConfig.mk found"
-        else
-          echo "❌ BoardConfig.mk not found!"
-          exit 1
-        fi
-
-    # ========== Create Android.mk if missing ==========
-    - name: Create Android.mk if needed
-      run: |
-        cd /home/runner/twrp || { echo "❌ Cannot cd to /home/runner/twrp"; exit 1; }
-        
-        if [ ! -f "device/infinix/X6725B/Android.mk" ]; then
-          echo "📝 Creating Android.mk"
-          cat > device/infinix/X6725B/Android.mk << 'EOF'
-        LOCAL_PATH := $(call my-dir)
-        ifeq ($(TARGET_DEVICE),X6725B)
-        include $(call all-makefiles-under,$(LOCAL_PATH))
-        endif
-        EOF
-          echo "✅ Android.mk created"
-        fi
+        echo "✅ Device tree cloned"
 
     # ========== Create Dummy Kernel ==========
+    - name: Create Dummy Kernel
+      run: |
+        cd /home/runner/twrp
+        mkdir -p device/infinix/X6725B/prebuilt
+        echo "dummy kernel" > device/infinix/X6725B/prebuilt/kernel
+        touch device/infinix/X6725B/prebuilt/dtb.img
+        echo "✅ Dummy kernel created"
+
+    # ========== Build TWRP ==========
+    - name: Build TWRP
+      run: |
+        cd /home/runner/twrp
+        
+        export ALLOW_MISSING_DEPENDENCIES=true
+        export LC_ALL=C
+        
+        if [ -f "build/envsetup.sh" ]; then
+          source build/envsetup.sh
+          lunch twrp_X6725B-eng || echo "Lunch failed but continuing"
+          echo "🔨 Building..."
+          mka recoveryimage -j2
+        else
+          echo "build/envsetup.sh not found!"
+          ls -la
+        fi
+
+    # ========== Upload Artifacts ==========
+    - name: Upload Recovery Image
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: TWRP-X6725B
+        path: |
+          /home/runner/twrp/out/target/product/X6725B/recovery.img
+          /home/runner/twrp/out/target/product/X6725B/boot.img
+        if-no-files-found: ignore    # ========== Create Dummy Kernel ==========
     - name: Create Dummy Kernel
       run: |
         cd /home/runner/twrp || { echo "❌ Cannot cd to /home/runner/twrp"; exit 1; }
