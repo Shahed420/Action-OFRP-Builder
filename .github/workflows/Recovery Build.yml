@@ -94,7 +94,7 @@ jobs:
         
         # Device tree ক্লোন
         mkdir -p device/infinix/X6725B
-        git clone --depth 1 https://github.com/Shahed420/Infinix_X6725B_TWRP_Tree.git device_tree_temp
+        git clone --depth 1 https://github.com/twrpdtgen/android_device_infinix_tssi.git device_tree_temp
         cp -r device_tree_temp/* device/infinix/X6725B/
         rm -rf device_tree_temp
         
